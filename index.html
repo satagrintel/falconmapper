@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Fieldmark — Plot Boundary Mapper</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --soil:#2A1F17;
+    --soil-2:#3E2E20;
+    --field:#4F6B3A;
+    --field-dark:#374C29;
+    --field-light:#7C9A5E;
+    --gold:#D9A62E;
+    --gold-dim:#B8891F;
+    --cream:#F4EEE2;
+    --cream-dim:#E6DDC9;
+    --sky:#6B8CAE;
+    --danger:#B8452F;
+    --ink:#221A13;
+    font-size:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;font-family:'Inter',sans-serif;color:var(--ink);}
+  #map{position:absolute;inset:0;background:#1a1a1a;}
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    position:absolute; top:0; left:0; right:0; z-index:500;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px 10px;
+    background:linear-gradient(180deg, rgba(20,15,10,0.75) 0%, rgba(20,15,10,0.35) 70%, transparent 100%);
+    pointer-events:none;
+  }
+  .brand{display:flex; flex-direction:column; pointer-events:auto;}
+  .brand .mark{font-family:'Fraunces',serif; font-weight:700; font-size:1.35rem; color:var(--cream); letter-spacing:0.01em; display:flex; align-items:center; gap:8px;}
+  .brand .mark svg{flex-shrink:0;}
+  .brand .sub{font-size:0.68rem; color:var(--cream-dim); letter-spacing:0.08em; text-transform:uppercase; margin-top:1px; margin-left:26px;}
+  .total-badge{
+    pointer-events:auto;
+    background:rgba(244,238,226,0.96); border:1px solid rgba(0,0,0,0.06);
+    border-radius:14px; padding:8px 14px; text-align:right;
+    box-shadow:0 4px 14px rgba(0,0,0,0.25);
+  }
+  .total-badge .num{font-family:'Fraunces',serif; font-weight:600; font-size:1.05rem; color:var(--soil); line-height:1;}
+  .total-badge .lbl{font-size:0.62rem; text-transform:uppercase; letter-spacing:0.07em; color:var(--soil-2); opacity:0.7;}
+
+  /* ---------- Floating action controls ---------- */
+  .fab-stack{
+    position:absolute; right:14px; bottom:96px; z-index:500;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .fab{
+    width:52px; height:52px; border-radius:50%; border:none;
+    background:var(--cream); box-shadow:0 4px 16px rgba(0,0,0,0.35);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    color:var(--soil); transition:transform .15s ease, background .15s ease;
+  }
+  .fab:active{transform:scale(0.92);}
+  .fab.locating svg{animation:spin 1s linear infinite;}
+  .fab-draw{
+    width:auto; height:52px; padding:0 20px; border-radius:26px;
+    background:var(--field); color:var(--cream);
+    display:flex; align-items:center; gap:9px; font-family:'Inter'; font-weight:600; font-size:0.92rem;
+    box-shadow:0 4px 16px rgba(55,76,41,0.5);
+  }
+  .fab-draw.active{background:var(--danger); box-shadow:0 4px 16px rgba(184,69,47,0.5);}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* ---------- Draw toolbar ---------- */
+  .draw-toolbar{
+    position:absolute; left:50%; transform:translateX(-50%) translateY(0);
+    bottom:96px; z-index:600;
+    background:rgba(30,22,15,0.94); backdrop-filter:blur(6px);
+    border-radius:16px; padding:10px 12px; display:none;
+    align-items:center; gap:10px; box-shadow:0 6px 20px rgba(0,0,0,0.4);
+    max-width:92vw;
+  }
+  .draw-toolbar.visible{display:flex;}
+  .draw-toolbar .pts{color:var(--gold); font-size:0.82rem; font-weight:600; white-space:nowrap; padding:0 4px;}
+  .dt-btn{
+    border:none; border-radius:10px; padding:9px 14px; font-family:'Inter'; font-weight:600; font-size:0.82rem;
+    cursor:pointer; display:flex; align-items:center; gap:6px; white-space:nowrap;
+  }
+  .dt-undo{background:rgba(255,255,255,0.12); color:var(--cream);}
+  .dt-cancel{background:rgba(184,69,47,0.2); color:#E8917D;}
+  .dt-finish{background:var(--gold); color:var(--ink);}
+  .dt-finish.needs-more{opacity:0.45;}
+
+  /* ---------- Toast ---------- */
+  .toast{
+    position:absolute; left:50%; top:90px; transform:translateX(-50%) translateY(-10px);
+    z-index:700; background:rgba(30,22,15,0.95); color:var(--cream);
+    padding:11px 18px; border-radius:12px; font-size:0.86rem; font-weight:500;
+    box-shadow:0 6px 20px rgba(0,0,0,0.35); opacity:0; pointer-events:none;
+    transition:opacity .25s ease, transform .25s ease; max-width:86vw; text-align:center;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ---------- Bottom sheet ---------- */
+  .sheet{
+    position:absolute; left:0; right:0; bottom:0; z-index:550;
+    background:var(--cream);
+    border-radius:20px 20px 0 0;
+    box-shadow:0 -6px 24px rgba(0,0,0,0.3);
+    transform:translateY(calc(100% - 76px));
+    transition:transform .32s cubic-bezier(.32,.72,0,1);
+    max-height:72vh; display:flex; flex-direction:column;
+  }
+  .sheet.open{transform:translateY(0);}
+  .sheet-handle{
+    padding:12px 18px 8px; cursor:pointer; flex-shrink:0;
+  }
+  .sheet-handle .bar{width:38px; height:4px; background:rgba(0,0,0,0.15); border-radius:3px; margin:0 auto 10px;}
+  .sheet-handle .row{display:flex; align-items:center; justify-content:space-between;}
+  .sheet-handle h2{font-family:'Fraunces',serif; font-weight:600; font-size:1.05rem; margin:0; color:var(--soil);}
+  .sheet-handle .count{font-size:0.78rem; color:var(--soil-2); opacity:0.65;}
+  .sheet-list{overflow-y:auto; padding:0 14px 18px; flex:1;}
+  .plot-card{
+    display:flex; align-items:center; gap:12px;
+    background:#fff; border:1px solid rgba(0,0,0,0.06);
+    border-radius:14px; padding:12px 12px; margin-bottom:9px;
+  }
+  .plot-swatch{width:8px; align-self:stretch; border-radius:4px; background:var(--gold); flex-shrink:0;}
+  .plot-info{flex:1; min-width:0;}
+  .plot-info .name{font-weight:600; font-size:0.94rem; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .plot-info .meta{font-size:0.76rem; color:var(--soil-2); opacity:0.7; margin-top:2px;}
+  .plot-actions{display:flex; gap:6px; flex-shrink:0;}
+  .icon-btn{
+    width:36px; height:36px; border-radius:10px; border:none; background:var(--cream-dim);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--soil);
+  }
+  .icon-btn.del{background:rgba(184,69,47,0.12); color:var(--danger);}
+  .empty-state{padding:30px 10px 10px; text-align:center; color:var(--soil-2); opacity:0.6; font-size:0.88rem;}
+
+  /* ---------- Modal ---------- */
+  .modal-backdrop{
+    position:absolute; inset:0; background:rgba(20,15,10,0.55); z-index:800;
+    display:none; align-items:flex-end; justify-content:center;
+  }
+  .modal-backdrop.visible{display:flex;}
+  .modal{
+    background:var(--cream); width:100%; border-radius:20px 20px 0 0; padding:22px 20px 26px;
+    box-shadow:0 -8px 30px rgba(0,0,0,0.4);
+  }
+  .modal h3{font-family:'Fraunces',serif; font-weight:600; font-size:1.15rem; margin:0 0 4px; color:var(--soil);}
+  .modal .area-preview{font-size:0.86rem; color:var(--field-dark); font-weight:600; margin-bottom:16px;}
+  .modal input{
+    width:100%; padding:13px 14px; border-radius:12px; border:1.5px solid rgba(0,0,0,0.12);
+    font-size:0.95rem; font-family:'Inter'; margin-bottom:14px; background:#fff;
+  }
+  .modal input:focus{outline:none; border-color:var(--field);}
+  .modal select{
+    width:100%; padding:13px 14px; border-radius:12px; border:1.5px solid rgba(0,0,0,0.12);
+    font-size:0.95rem; font-family:'Inter'; margin-bottom:12px; background:#fff; color:var(--ink);
+    -webkit-appearance:none; appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23374C29' stroke-width='2.5'><path d='M6 9l6 6 6-6'/></svg>");
+    background-repeat:no-repeat; background-position:right 12px center;
+  }
+  .modal select:disabled{opacity:0.5; background-color:#f4f2ee;}
+  .modal-row button:disabled{opacity:0.45; pointer-events:none;}
+  .modal-row{display:flex; gap:10px;}
+  .modal-row button{
+    flex:1; padding:13px; border-radius:12px; border:none; font-weight:600; font-size:0.92rem; cursor:pointer;
+  }
+  .btn-cancel{background:rgba(0,0,0,0.06); color:var(--soil);}
+  .btn-save{background:var(--field); color:#fff;}
+
+  /* ---------- Leaflet overrides ---------- */
+  .leaflet-container{background:#1a1a1a; font-family:'Inter';}
+  .stake-icon{
+    width:16px; height:16px; border-radius:50%;
+    background:var(--gold); border:2.5px solid var(--ink);
+    box-shadow:0 0 0 3px rgba(217,166,46,0.35);
+  }
+  .locate-icon{
+    width:18px; height:18px; border-radius:50%;
+    background:var(--sky); border:3px solid #fff;
+    box-shadow:0 0 0 6px rgba(107,140,174,0.35);
+  }
+  .plot-label{
+    background:rgba(30,22,15,0.88); color:var(--gold); font-weight:600; font-size:0.72rem;
+    padding:2px 7px; border-radius:6px; border:none; box-shadow:none; white-space:nowrap;
+  }
+  .plot-label::before{display:none;}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="mark">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 21 L21 21" stroke="#D9A62E" stroke-width="2" stroke-linecap="round"/><path d="M5 21 V10 L12 4 L19 10 V21" stroke="#F4EEE2" stroke-width="2" stroke-linejoin="round" fill="none"/><path d="M9 21 V14 H15 V21" stroke="#D9A62E" stroke-width="1.6"/></svg>
+      Fieldmark
+    </div>
+    <div class="sub">Plot boundary mapper</div>
+    <div class="sub" style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+      <span id="userEmail" style="display:none;"></span>
+      <button id="btnSignOut" style="display:none; background:none; border:none; color:var(--cream-dim); text-decoration:underline; font-size:0.68rem; padding:0; cursor:pointer; letter-spacing:0.05em; text-transform:uppercase;">Sign out</button>
+    </div>
+  </div>
+  <div class="total-badge">
+    <div class="num" id="totalArea">0 ha</div>
+    <div class="lbl" id="totalCount">0 plots</div>
+    <div class="lbl" id="changeAreaBtn" style="pointer-events:auto; text-decoration:underline; cursor:pointer; margin-top:3px;">Change area</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="draw-toolbar" id="drawToolbar">
+  <button class="dt-btn dt-cancel" id="btnCancel">Cancel</button>
+  <div class="pts" id="ptCount">0 points</div>
+  <button class="dt-btn dt-undo" id="btnUndo">Undo</button>
+  <button class="dt-btn dt-finish needs-more" id="btnFinish">Finish</button>
+</div>
+
+<div class="fab-stack">
+  <button class="fab" id="btnLocate" title="Find my location">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+  <button class="fab" id="btnManualLocate" title="Set my location manually">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s7-7.5 7-12.5A7 7 0 0 0 5 9.5C5 14.5 12 22 12 22Z"/><circle cx="12" cy="9.5" r="2.2"/></svg>
+  </button>
+</div>
+
+<button class="fab fab-draw" id="btnDraw" style="position:absolute; left:14px; bottom:96px; z-index:500;">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 20 L4 14 L14 4 L20 10 L10 20 Z"/><path d="M13 5 L19 11"/></svg>
+  <span id="drawBtnLabel">Mark a plot</span>
+</button>
+
+<div class="sheet" id="sheet">
+  <div class="sheet-handle" id="sheetHandle">
+    <div class="bar"></div>
+    <div class="row">
+      <h2>Your plots</h2>
+      <div class="count" id="sheetCount">0 saved</div>
+    </div>
+  </div>
+  <div class="sheet-list" id="sheetList"></div>
+</div>
+
+<div class="modal-backdrop visible" id="authGate" style="align-items:center; padding:20px; z-index:900;">
+  <div class="modal" style="border-radius:20px; margin:auto; max-width:380px;">
+    <h3 id="authTitle">Sign in</h3>
+    <div class="area-preview" style="color:var(--soil-2); font-weight:400; line-height:1.4;">
+      Sign in to save your plot boundaries to your account.
+    </div>
+    <input type="email" id="authEmail" placeholder="Email" autocomplete="email">
+    <input type="password" id="authPassword" placeholder="Password" autocomplete="current-password">
+    <div id="authError" style="color:var(--danger); font-size:0.82rem; margin:-6px 0 12px; min-height:1.2em;"></div>
+    <div class="modal-row">
+      <button class="btn-save" id="authSubmitBtn" style="width:100%;">Sign In</button>
+    </div>
+    <div style="display:flex; justify-content:space-between; margin-top:10px; flex-wrap:wrap; gap:6px;">
+      <button id="authToggleBtn" style="background:none; border:none; color:var(--field-dark); font-weight:600; font-size:0.82rem; padding:8px; cursor:pointer; text-decoration:underline;">New here? Create an account</button>
+      <button id="authResetBtn" style="background:none; border:none; color:var(--soil-2); font-weight:600; font-size:0.82rem; padding:8px; cursor:pointer; text-decoration:underline;">Forgot password?</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="permBackdrop" style="align-items:center; padding:20px;">
+  <div class="modal" style="border-radius:20px; margin:auto; max-width:380px;">
+    <h3>Where's your farm?</h3>
+    <div class="area-preview" style="color:var(--soil-2); font-weight:400; line-height:1.4;">
+      Choose your province, district, and ward. We'll zoom the map there and outline the boundary.
+    </div>
+    <select id="selProvince"><option value="">Select province…</option></select>
+    <select id="selDistrict" disabled><option value="">Select district…</option></select>
+    <select id="selWard" disabled><option value="">Select ward (optional)…</option></select>
+    <div class="modal-row">
+      <button class="btn-save" id="btnFindArea" style="width:100%;" disabled>Show my area</button>
+    </div>
+    <div style="display:flex; justify-content:space-between; margin-top:10px;">
+      <button id="btnPermSkip" style="background:none; border:none; color:var(--soil-2); font-weight:600; font-size:0.82rem; padding:8px; cursor:pointer; text-decoration:underline;">Skip, I'll pan manually</button>
+      <button id="btnPermManual" style="background:none; border:none; color:var(--field-dark); font-weight:600; font-size:0.82rem; padding:8px; cursor:pointer; text-decoration:underline;">Use device location</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <h3>Name this plot</h3>
+    <div class="area-preview" id="modalAreaPreview">0 ha</div>
+    <input type="text" id="plotNameInput" placeholder="e.g. North field, Rice plot 2" maxlength="40" autocomplete="off">
+    <div class="modal-row">
+      <button class="btn-cancel" id="btnModalCancel">Discard</button>
+      <button class="btn-save" id="btnModalSave">Save plot</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-auth-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-firestore-compat.min.js"></script>
+<script>
+(function(){
+
+  // ---------------- Firebase ----------------
+  // Replace these with YOUR project's values:
+  // Firebase Console → Project settings → General → Your apps → SDK setup and configuration
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyBbi0x8v_LG2-2WQ-OcOMpuHoVAYNwT8YE",
+    authDomain: "falconmapper-d7ab7.firebaseapp.com",
+    projectId: "falconmapper-d7ab7",
+    storageBucket: "falconmapper-d7ab7.firebasestorage.app",
+    messagingSenderId: "756834234818",
+    appId: "1:756834234818:web:613015922cf5add721665b"
+  };
+  firebase.initializeApp(FIREBASE_CONFIG);
+  const auth = firebase.auth();
+  const db = firebase.firestore();
+  let currentUser = null;
+
+  function friendlyAuthError(err){
+    const map = {
+      'auth/invalid-email': 'That email address looks invalid.',
+      'auth/user-not-found': 'No account with that email — try creating one.',
+      'auth/wrong-password': 'Incorrect password.',
+      'auth/email-already-in-use': 'An account already exists with that email — try signing in instead.',
+      'auth/weak-password': 'Password should be at least 6 characters.',
+      'auth/network-request-failed': 'Network error — check your connection.',
+      'auth/invalid-credential': 'Incorrect email or password.',
+      'auth/configuration-not-found': 'Email/Password sign-in isn\'t enabled for this Firebase project yet.'
+    };
+    return (err && map[err.code]) || (err && err.message) || 'Something went wrong. Try again.';
+  }
+
+  const authGate = document.getElementById('authGate');
+  const authEmail = document.getElementById('authEmail');
+  const authPassword = document.getElementById('authPassword');
+  const authError = document.getElementById('authError');
+  const authTitle = document.getElementById('authTitle');
+  const authSubmitBtn = document.getElementById('authSubmitBtn');
+  const authToggleBtn = document.getElementById('authToggleBtn');
+  const authResetBtn = document.getElementById('authResetBtn');
+  let authMode = 'signin';
+
+  function setAuthMode(mode){
+    authMode = mode;
+    authError.style.color = 'var(--danger)';
+    authError.textContent = '';
+    if (mode === 'signin'){
+      authTitle.textContent = 'Sign in';
+      authSubmitBtn.textContent = 'Sign In';
+      authToggleBtn.textContent = 'New here? Create an account';
+    } else {
+      authTitle.textContent = 'Create your account';
+      authSubmitBtn.textContent = 'Create Account';
+      authToggleBtn.textContent = 'Already have an account? Sign in';
+    }
+  }
+  authToggleBtn.addEventListener('click', ()=> setAuthMode(authMode==='signin' ? 'signup' : 'signin'));
+
+  authSubmitBtn.addEventListener('click', async ()=>{
+    const email = authEmail.value.trim();
+    const password = authPassword.value;
+    authError.style.color = 'var(--danger)';
+    authError.textContent = '';
+    if (!email || !password){
+      authError.textContent = 'Enter an email and password.';
+      return;
+    }
+    const originalLabel = authSubmitBtn.textContent;
+    authSubmitBtn.disabled = true;
+    authSubmitBtn.textContent = 'Please wait…';
+    try{
+      if (authMode === 'signin'){
+        await auth.signInWithEmailAndPassword(email, password);
+      } else {
+        await auth.createUserWithEmailAndPassword(email, password);
+      }
+    } catch(err){
+      authError.textContent = friendlyAuthError(err);
+    } finally {
+      authSubmitBtn.disabled = false;
+      authSubmitBtn.textContent = originalLabel;
+    }
+  });
+
+  authResetBtn.addEventListener('click', async ()=>{
+    const email = authEmail.value.trim();
+    authError.style.color = 'var(--danger)';
+    if (!email){
+      authError.textContent = 'Enter your email above first, then tap "Forgot password".';
+      return;
+    }
+    try{
+      await auth.sendPasswordResetEmail(email);
+      authError.style.color = 'var(--field-dark)';
+      authError.textContent = 'Password reset email sent — check your inbox.';
+    } catch(err){
+      authError.style.color = 'var(--danger)';
+      authError.textContent = friendlyAuthError(err);
+    }
+  });
+
+  document.getElementById('btnSignOut').addEventListener('click', ()=> auth.signOut());
+
+  auth.onAuthStateChanged(user=>{
+    currentUser = user;
+    const emailEl = document.getElementById('userEmail');
+    const signOutBtn = document.getElementById('btnSignOut');
+    if (user){
+      authGate.classList.remove('visible');
+      emailEl.textContent = user.email;
+      emailEl.style.display = 'inline';
+      signOutBtn.style.display = 'inline';
+      document.getElementById('permBackdrop').classList.add('visible');
+      loadPlots();
+    } else {
+      authGate.classList.add('visible');
+      emailEl.style.display = 'none';
+      signOutBtn.style.display = 'none';
+      document.getElementById('permBackdrop').classList.remove('visible');
+      plots.forEach(p=>{ if (savedLayers[p.id]) map.removeLayer(savedLayers[p.id]); });
+      plots = [];
+      renderList();
+    }
+  });
+
+  // ---------------- Map setup ----------------
+  const map = L.map('map', { zoomControl:false, attributionControl:true }).setView([20.5937,78.9629], 5);
+  L.control.zoom({position:'bottomleft'}).addTo(map);
+
+  // Prevent the map from swallowing taps/drags meant for overlaid UI controls.
+  ['drawToolbar','sheet','permBackdrop','modalBackdrop','authGate'].forEach(id=>{
+    const el = document.getElementById(id);
+    if (el) { L.DomEvent.disableClickPropagation(el); L.DomEvent.disableScrollPropagation(el); }
+  });
+  document.querySelectorAll('.fab, .fab-draw').forEach(el=>{
+    L.DomEvent.disableClickPropagation(el);
+  });
+
+  // Satellite basemap (Esri World Imagery) — visually equivalent to Google Satellite, no API key required.
+  // To use real Google Maps tiles instead, swap this layer for the Google Maps JS API (needs a billing-enabled key).
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 20,
+    attribution: 'Imagery &copy; Esri'
+  }).addTo(map);
+
+  // Light reference labels overlay (roads/place names) on top of imagery, hybrid-style.
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 20, opacity:0.85
+  }).addTo(map);
+
+  // ---------------- Helpers ----------------
+  const toast = (msg, ms=2600) => {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(el._t);
+    el._t = setTimeout(()=>el.classList.remove('show'), ms);
+  };
+
+  const fmtArea = (ha) => {
+    if (ha < 0.01) return (ha*10000).toFixed(0) + ' m²';
+    return ha.toFixed(ha < 10 ? 2 : 1) + ' ha';
+  };
+  const fmtAcres = (ha) => (ha*2.47105).toFixed(2) + ' ac';
+
+  // Equirectangular-projected shoelace formula — accurate for field-sized polygons,
+  // no external geo library required.
+  function computeAreaM2(latlngs){
+    const R = 6378137;
+    const lat0 = latlngs[0][0] * Math.PI/180;
+    const toXY = ([lat,lng]) => [
+      R * (lng*Math.PI/180) * Math.cos(lat0),
+      R * (lat*Math.PI/180)
+    ];
+    const pts = latlngs.map(toXY);
+    let area = 0;
+    for (let i=0; i<pts.length; i++){
+      const [x1,y1] = pts[i];
+      const [x2,y2] = pts[(i+1)%pts.length];
+      area += (x1*y2 - x2*y1);
+    }
+    return Math.abs(area/2);
+  }
+
+  const stakeIcon = L.divIcon({className:'', html:'<div class="stake-icon"></div>', iconSize:[16,16], iconAnchor:[8,8]});
+  const locateIcon = L.divIcon({className:'', html:'<div class="locate-icon"></div>', iconSize:[18,18], iconAnchor:[9,9]});
+
+  // ---------------- Geolocation ----------------
+  let userMarker = null;
+  function locateMe(showToast){
+    const btn = document.getElementById('btnLocate');
+    btn.classList.add('locating');
+    if (!navigator.geolocation){
+      btn.classList.remove('locating');
+      toast("This browser can't access location. Use \"Set manually\" to drop a pin instead.", 4200);
+      return;
+    }
+    try{
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          btn.classList.remove('locating');
+          const {latitude, longitude} = pos.coords;
+          if (userMarker) map.removeLayer(userMarker);
+          userMarker = L.marker([latitude, longitude], {icon: locateIcon}).addTo(map);
+          map.flyTo([latitude, longitude], 18, {duration:1.1});
+          if (showToast) toast('Located your position');
+        },
+        (err) => {
+          btn.classList.remove('locating');
+          let msg = 'Could not get your location. Use "Set manually" to drop a pin instead.';
+          if (err.code === 1) msg = 'Location permission was denied — use "Set manually" to drop a pin on your field instead.';
+          else if (err.code === 2) msg = 'Location unavailable right now — use "Set manually" to drop a pin instead.';
+          else if (err.code === 3) msg = 'Location request timed out — try again or use "Set manually".';
+          toast(msg, 4200);
+        },
+        { enableHighAccuracy:true, timeout:10000, maximumAge:0 }
+      );
+    } catch(e){
+      // Some sandboxed environments block geolocation outright and throw synchronously,
+      // so the native browser prompt never even appears.
+      btn.classList.remove('locating');
+      toast('This app can\'t request location here. Use "Set manually" to drop a pin on your field.', 4600);
+    }
+  }
+  // ---------------- Manual "drop a pin" location fallback ----------------
+  let manualPickMode = false;
+  function enterManualPick(){
+    manualPickMode = true;
+    cancelDraw(); // don't collide with boundary drawing
+    document.getElementById('btnManualLocate').style.background = 'var(--gold)';
+    toast('Tap the map where you are standing', 3200);
+  }
+  function exitManualPick(){
+    manualPickMode = false;
+    document.getElementById('btnManualLocate').style.background = '';
+  }
+  document.getElementById('btnManualLocate').addEventListener('click', ()=>{
+    manualPickMode ? exitManualPick() : enterManualPick();
+  });
+
+  document.getElementById('btnLocate').addEventListener('click', ()=>locateMe(true));
+
+  // ---------------- Zimbabwe administrative boundaries (fetched from /data) ----------------
+  // Point this at wherever you host the data folder from the pipeline I generated:
+  //   same repo, e.g. GitHub Pages:  'data/'
+  //   a separate repo via raw GitHub: 'https://raw.githubusercontent.com/<user>/<repo>/main/data/'
+  // Expected files (standard GeoJSON FeatureCollections):
+  //   provinces.geojson   — each Feature: properties {id, name}
+  //   districts.geojson   — each Feature: properties {id, name, parent}
+  //   wards/<districtId>.geojson — each Feature: properties {id, name}
+  const DATA_BASE = 'data/';
+
+  let provincesData = [];
+  let districtsData = [];
+  const wardCache = {};   // districtId -> wards array, fetched on demand
+  const byId = {};        // id -> {id, name, parent, feature} boundary item, filled as data loads
+
+  function itemsFromGeoJSON(featureCollection){
+    return (featureCollection.features || []).map(f => ({
+      id: f.properties.id,
+      name: f.properties.name,
+      parent: f.properties.parent,
+      feature: f
+    }));
+  }
+
+  async function loadCoreData(){
+    try{
+      const [provRes, distRes] = await Promise.all([
+        fetch(DATA_BASE + 'provinces.geojson'),
+        fetch(DATA_BASE + 'districts.geojson')
+      ]);
+      if (!provRes.ok || !distRes.ok) throw new Error('bad response: ' + provRes.status + '/' + distRes.status);
+      provincesData = itemsFromGeoJSON(await provRes.json());
+      districtsData = itemsFromGeoJSON(await distRes.json());
+      provincesData.forEach(p=>byId[p.id]=p);
+      districtsData.forEach(d=>byId[d.id]=d);
+      fillOptions(selProvince, provincesData, 'Select province…');
+      btnFindArea.disabled = true;
+    } catch(e){
+      toast('Could not load boundary data from "' + DATA_BASE + '" — make sure the data folder is hosted alongside this page.', 5000);
+    }
+  }
+
+  async function loadWards(districtId){
+    if (wardCache[districtId]) return wardCache[districtId];
+    const res = await fetch(DATA_BASE + 'wards/' + encodeURIComponent(districtId) + '.geojson');
+    if (!res.ok) throw new Error('ward fetch failed: ' + res.status);
+    const wards = itemsFromGeoJSON(await res.json());
+    wards.forEach(w=>byId[w.id]=w);
+    wardCache[districtId] = wards;
+    return wards;
+  }
+
+  let boundaryLayer = null;
+  function drawBoundary(item){
+    if (boundaryLayer) { map.removeLayer(boundaryLayer); boundaryLayer = null; }
+    // L.geoJSON understands standard [lng,lat] GeoJSON coordinate order natively —
+    // no manual ring conversion needed.
+    boundaryLayer = L.geoJSON(item.feature, {
+      style: { color:'#6B8CAE', weight:2.5, dashArray:'2 6', fillColor:'#6B8CAE', fillOpacity:0.04 },
+      interactive: false
+    }).addTo(map);
+    map.flyToBounds(boundaryLayer.getBounds(), {padding:[30,30], duration:1.1});
+  }
+
+  const selProvince = document.getElementById('selProvince');
+  const selDistrict = document.getElementById('selDistrict');
+  const selWard = document.getElementById('selWard');
+  const btnFindArea = document.getElementById('btnFindArea');
+
+  function fillOptions(select, items, placeholder){
+    select.innerHTML = '<option value="">' + placeholder + '</option>';
+    items.slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(it=>{
+      const opt = document.createElement('option');
+      opt.value = it.id; opt.textContent = it.name;
+      select.appendChild(opt);
+    });
+  }
+
+  selProvince.addEventListener('change', ()=>{
+    const pid = selProvince.value;
+    selDistrict.innerHTML = '<option value="">Select district…</option>';
+    selWard.innerHTML = '<option value="">Select ward (optional)…</option>';
+    selDistrict.disabled = !pid;
+    selWard.disabled = true;
+    btnFindArea.disabled = !pid;
+    if (pid){
+      const districts = districtsData.filter(d=>d.parent===pid);
+      fillOptions(selDistrict, districts, 'Select district…');
+    }
+  });
+
+  selDistrict.addEventListener('change', async ()=>{
+    const did = selDistrict.value;
+    selWard.innerHTML = '<option value="">' + (did ? 'Loading wards…' : 'Select ward (optional)…') + '</option>';
+    selWard.disabled = true;
+    if (!did) return;
+    try{
+      const wards = await loadWards(did);
+      fillOptions(selWard, wards, 'Select ward (optional)…');
+      selWard.disabled = false;
+    } catch(e){
+      selWard.innerHTML = '<option value="">Wards unavailable</option>';
+      toast('Could not load wards for this district — you can still show the district boundary.', 3600);
+    }
+  });
+
+  function findArea(){
+    const id = selWard.value || selDistrict.value || selProvince.value;
+    if (!id){
+      toast('Select at least a province', 2200);
+      return;
+    }
+    const item = byId[id];
+    drawBoundary(item);
+    document.getElementById('permBackdrop').classList.remove('visible');
+    toast('Showing ' + item.name);
+  }
+  document.getElementById('btnFindArea').addEventListener('click', findArea);
+  document.getElementById('changeAreaBtn').addEventListener('click', ()=>{
+    document.getElementById('permBackdrop').classList.add('visible');
+  });
+
+  document.getElementById('btnPermManual').addEventListener('click', ()=>{
+    document.getElementById('permBackdrop').classList.remove('visible');
+    locateMe(true);
+  });
+  document.getElementById('btnPermSkip').addEventListener('click', ()=>{
+    document.getElementById('permBackdrop').classList.remove('visible');
+    toast('Pan and zoom the map to find your field');
+  });
+
+  loadCoreData();
+
+  // ---------------- Drawing state ----------------
+  let drawing = false;
+  let points = [];          // [ [lat,lng], ... ]
+  let vertexMarkers = [];
+  let previewLine = null;
+  let previewPoly = null;
+
+  const drawBtn = document.getElementById('btnDraw');
+  const drawLabel = document.getElementById('drawBtnLabel');
+  const toolbar = document.getElementById('drawToolbar');
+  const ptCountEl = document.getElementById('ptCount');
+  const finishBtn = document.getElementById('btnFinish');
+
+  function updatePreview(){
+    if (previewLine) map.removeLayer(previewLine);
+    if (previewPoly) { map.removeLayer(previewPoly); previewPoly = null; }
+    if (points.length >= 2){
+      previewLine = L.polyline(points, {color:'#D9A62E', weight:3, dashArray:'6 6'}).addTo(map);
+    }
+    if (points.length >= 3){
+      previewPoly = L.polygon(points, {color:'#D9A62E', weight:3, dashArray:'6 6', fillColor:'#D9A62E', fillOpacity:0.15}).addTo(map);
+    }
+    ptCountEl.textContent = points.length + ' point' + (points.length===1?'':'s');
+    finishBtn.classList.toggle('needs-more', points.length < 3);
+  }
+
+  function onMapClick(e){
+    if (manualPickMode){
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.marker(e.latlng, {icon: locateIcon}).addTo(map);
+      exitManualPick();
+      toast('Location set');
+      return;
+    }
+    if (!drawing) return;
+    points.push([e.latlng.lat, e.latlng.lng]);
+    const m = L.marker(e.latlng, {icon: stakeIcon}).addTo(map);
+    vertexMarkers.push(m);
+    updatePreview();
+  }
+
+  function startDraw(){
+    drawing = true;
+    points = [];
+    vertexMarkers.forEach(m=>map.removeLayer(m));
+    vertexMarkers = [];
+    if (previewLine) map.removeLayer(previewLine);
+    if (previewPoly) map.removeLayer(previewPoly);
+    drawBtn.classList.add('active');
+    drawLabel.textContent = 'Drawing…';
+    toolbar.classList.add('visible');
+    closeSheet();
+    updatePreview();
+    toast('Tap the map to place boundary points, then Finish');
+  }
+
+  function cancelDraw(){
+    drawing = false;
+    points = [];
+    vertexMarkers.forEach(m=>map.removeLayer(m));
+    vertexMarkers = [];
+    if (previewLine) map.removeLayer(previewLine);
+    if (previewPoly) map.removeLayer(previewPoly);
+    previewLine = null; previewPoly = null;
+    drawBtn.classList.remove('active');
+    drawLabel.textContent = 'Mark a plot';
+    toolbar.classList.remove('visible');
+  }
+
+  function undoPoint(){
+    if (!points.length) return;
+    points.pop();
+    const m = vertexMarkers.pop();
+    if (m) map.removeLayer(m);
+    updatePreview();
+  }
+
+  function finishDraw(){
+    if (points.length < 3){
+      toast('Add at least 3 points to close a boundary — you have ' + points.length + '.', 2400);
+      return;
+    }
+    try{
+      const areaM2 = computeAreaM2(points);
+      const areaHa = areaM2 / 10000;
+      document.getElementById('modalAreaPreview').textContent =
+        fmtArea(areaHa) + '  ·  ' + fmtAcres(areaHa);
+      document.getElementById('plotNameInput').value = '';
+      document.getElementById('modalBackdrop').classList.add('visible');
+      setTimeout(()=>document.getElementById('plotNameInput').focus(), 200);
+      finishDraw._pendingPoints = points.slice();
+      finishDraw._pendingArea = areaHa;
+    } catch(err){
+      toast('Something went wrong finishing this boundary: ' + err.message, 4000);
+    }
+  }
+
+  drawBtn.addEventListener('click', ()=>{ drawing ? cancelDraw() : startDraw(); });
+  document.getElementById('btnCancel').addEventListener('click', cancelDraw);
+  document.getElementById('btnUndo').addEventListener('click', undoPoint);
+  document.getElementById('btnFinish').addEventListener('click', finishDraw);
+  map.on('click', onMapClick);
+
+  // ---------------- Modal save/discard ----------------
+  document.getElementById('btnModalCancel').addEventListener('click', ()=>{
+    document.getElementById('modalBackdrop').classList.remove('visible');
+  });
+  document.getElementById('btnModalSave').addEventListener('click', async ()=>{
+    const name = document.getElementById('plotNameInput').value.trim() || ('Plot ' + (plots.length+1));
+    const pts = finishDraw._pendingPoints;
+    const areaHa = finishDraw._pendingArea;
+    const plot = {
+      id: 'plot_' + Date.now(),
+      name,
+      points: pts,
+      areaHa,
+      created: new Date().toISOString()
+    };
+    plots.push(plot);
+    await persistPlot(plot);
+    renderPlotLayer(plot);
+    renderList();
+    document.getElementById('modalBackdrop').classList.remove('visible');
+    cancelDraw();
+    toast('Saved "' + name + '"');
+  });
+
+  // ---------------- Persistence (Firestore, scoped to the signed-in user) ----------------
+  let plots = [];
+  const savedLayers = {};
+
+  function plotsCollection(){
+    return db.collection('users').doc(currentUser.uid).collection('plots');
+  }
+
+  async function loadPlots(){
+    if (!currentUser) return;
+    try{
+      const snap = await plotsCollection().get();
+      plots = snap.docs.map(d => Object.assign({id: d.id}, d.data()));
+    }catch(e){
+      toast('Could not load your saved plots — check your connection.', 3600);
+      plots = [];
+    }
+    plots.forEach(renderPlotLayer);
+    renderList();
+  }
+  async function persistPlot(plot){
+    if (!currentUser) return;
+    try{
+      await plotsCollection().doc(plot.id).set({
+        name: plot.name, points: plot.points, areaHa: plot.areaHa, created: plot.created
+      });
+    }catch(e){
+      toast('Could not save to your account — check your connection.', 3600);
+    }
+  }
+
+  function renderPlotLayer(plot){
+    if (savedLayers[plot.id]) { map.removeLayer(savedLayers[plot.id]); }
+    const poly = L.polygon(plot.points, {
+      color:'#D9A62E', weight:2.5, fillColor:'#D9A62E', fillOpacity:0.22
+    }).addTo(map);
+    const center = poly.getBounds().getCenter();
+    const label = L.marker(center, {
+      icon: L.divIcon({className:'', html:'<div class="plot-label">'+escapeHtml(plot.name)+'</div>', iconSize:null}),
+      interactive:false
+    }).addTo(map);
+    savedLayers[plot.id] = L.layerGroup([poly, label]);
+    // replace with grouped layer for easy removal
+    map.removeLayer(poly); map.removeLayer(label);
+    savedLayers[plot.id].addTo(map);
+  }
+
+  function escapeHtml(s){
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function zoomToPlot(id){
+    const plot = plots.find(p=>p.id===id);
+    if (!plot) return;
+    const b = L.polygon(plot.points).getBounds();
+    map.flyToBounds(b, {padding:[60,60], duration:0.9});
+    openSheet(false);
+  }
+
+  async function deletePlot(id){
+    const plot = plots.find(p=>p.id===id);
+    if (!plot) return;
+    if (!confirm('Delete "' + plot.name + '"? This cannot be undone.')) return;
+    if (savedLayers[id]) { map.removeLayer(savedLayers[id]); delete savedLayers[id]; }
+    plots = plots.filter(p=>p.id!==id);
+    try{
+      if (currentUser) await plotsCollection().doc(id).delete();
+    }catch(e){
+      toast('Could not delete from your account — check your connection.', 3600);
+    }
+    renderList();
+    toast('Deleted plot');
+  }
+
+  // ---------------- List / totals ----------------
+  function renderList(){
+    const list = document.getElementById('sheetList');
+    const totalHa = plots.reduce((s,p)=>s+p.areaHa,0);
+    document.getElementById('totalArea').textContent = fmtArea(totalHa);
+    document.getElementById('totalCount').textContent = plots.length + (plots.length===1?' plot':' plots');
+    document.getElementById('sheetCount').textContent = plots.length + ' saved';
+
+    if (!plots.length){
+      list.innerHTML = '<div class="empty-state">No plots yet. Tap "Mark a plot" and trace the boundary on the map.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    plots.slice().reverse().forEach(plot=>{
+      const card = document.createElement('div');
+      card.className = 'plot-card';
+      const d = new Date(plot.created);
+      card.innerHTML = `
+        <div class="plot-swatch"></div>
+        <div class="plot-info">
+          <div class="name">${escapeHtml(plot.name)}</div>
+          <div class="meta">${fmtArea(plot.areaHa)} · ${fmtAcres(plot.areaHa)} · ${d.toLocaleDateString()}</div>
+        </div>
+        <div class="plot-actions">
+          <button class="icon-btn zoom" title="Zoom to plot">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          </button>
+          <button class="icon-btn del" title="Delete plot">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+          </button>
+        </div>`;
+      card.querySelector('.zoom').addEventListener('click', ()=>zoomToPlot(plot.id));
+      card.querySelector('.del').addEventListener('click', ()=>deletePlot(plot.id));
+      list.appendChild(card);
+    });
+  }
+
+  // ---------------- Bottom sheet ----------------
+  const sheet = document.getElementById('sheet');
+  function openSheet(){ sheet.classList.add('open'); }
+  function closeSheet(){ sheet.classList.remove('open'); }
+  document.getElementById('sheetHandle').addEventListener('click', ()=>{
+    sheet.classList.toggle('open');
+  });
+
+  // ---------------- Init ----------------
+  // Boundary reference data isn't user-specific, so load it immediately.
+  // Plot data loads once a user signs in (see onAuthStateChanged above).
+
+})();
+</script>
+</body>
+</html>

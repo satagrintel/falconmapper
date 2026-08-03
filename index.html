@@ -458,7 +458,7 @@
   // if you still see that message before reaching max zoom in your area,
   // lower this number; if imagery stays sharp all the way to 18, you can
   // raise it.
-  const MAX_MAP_ZOOM = 19;
+  const MAX_MAP_ZOOM = 18;
   const map = L.map('map', { zoomControl:false, attributionControl:true, maxZoom: MAX_MAP_ZOOM }).setView([20.5937,78.9629], 5);
   L.control.zoom({position:'bottomleft'}).addTo(map);
 

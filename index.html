@@ -441,13 +441,13 @@
   // Satellite basemap (Esri World Imagery) — visually equivalent to Google Satellite, no API key required.
   // To use real Google Maps tiles instead, swap this layer for the Google Maps JS API (needs a billing-enabled key).
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 20,
+    maxZoom: 17,
     attribution: 'Imagery &copy; Esri'
   }).addTo(map);
 
   // Light reference labels overlay (roads/place names) on top of imagery, hybrid-style.
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-    maxZoom: 20, opacity:0.85
+    maxZoom: 17, opacity:0.85
   }).addTo(map);
 
   // ---------------- Helpers ----------------
